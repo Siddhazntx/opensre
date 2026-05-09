@@ -81,10 +81,11 @@ def terminate(pid: int, *, grace_s: float = DEFAULT_GRACE_SECONDS) -> TerminateR
             )
         time.sleep(_POLL_INTERVAL)
 
-    # --- SIGKILL escalation ---
+    # --- SIGKILL escalation (or second SIGTERM on platforms without SIGKILL, e.g. Windows)
     logger.warning("pid %d did not exit after SIGTERM; sending SIGKILL", pid)
+    kill_signal = getattr(signal, "SIGKILL", signal.SIGTERM)
     try:
-        os.kill(pid, signal.SIGKILL)
+        os.kill(pid, kill_signal)
     except ProcessLookupError:
         return TerminateResult(
             pid=pid,
