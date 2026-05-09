@@ -2,8 +2,9 @@
 
 ## Build and Run commands
 
-- Build `make install`
-- Run `opensre`
+- Build `make install` (sets up the project environment via `uv sync` and installs this repo in editable mode)
+- Run **`uv run opensre …`** from the repo root while developing — preferred approach, uses this checkout even if another `opensre` is on your `PATH`.
+- Use **`uv run python …`** for any Python commands.
 
 ## Lint & Format
 
@@ -33,19 +34,19 @@
 
 ## 1. Repo Map
 
-
-| Path              | What it does                                                                             |
-| ----------------- | ---------------------------------------------------------------------------------------- |
-| `app/`            | Core agent logic, CLI, tools, integrations, services, graph pipeline, and runtime state. |
-| `tests/`          | Unit, integration, synthetic, deployment, e2e, chaos engineering, and support tests.     |
-| `docs/`           | User-facing documentation, integration guides, and docs-site assets.                     |
-| `.github/`        | CI workflows, issue templates, pull request template, and repository automation.         |
-| `langgraph.json`  | LangGraph deployment configuration for the hosted agent runtime.                         |
-| `pyproject.toml`  | Python project metadata, dependency configuration, tooling, and package settings.        |
-| `Makefile`        | Canonical local automation for install, test, verify, deploy, and cleanup targets.       |
-| `README.md`       | Product overview, quick start, capabilities, integrations, and common workflows.         |
-| `CONTRIBUTING.md` | Contribution workflow, branch/PR guidance, and quality expectations.                     |
-
+| Path                  | What it does                                                                                       |
+| --------------------- | -------------------------------------------------------------------------------------------------- |
+| `app/`                | Core agent logic, CLI, tools, integrations, services, graph pipeline, and runtime state.           |
+| `tests/`              | Unit, integration, synthetic, deployment, e2e, chaos engineering, and support tests.               |
+| `docs/`               | User-facing documentation, integration guides, and docs-site assets.                               |
+| `.github/`            | CI workflows, issue templates, pull request template, and repository automation.                   |
+| `langgraph.json`      | LangGraph deployment configuration for the hosted agent runtime.                                   |
+| `pyproject.toml`      | Python project metadata, dependency configuration, tooling, and package settings.                  |
+| `Makefile`            | Canonical local automation for install, test, verify, deploy, and cleanup targets.                 |
+| `README.md`           | Product overview, install, quick start, high-level capabilities, and links to deeper docs.         |
+| `docs/DEVELOPMENT.md` | Contributor workflows: CI parity commands, dev container, benchmark, deployment, telemetry detail. |
+| `SETUP.md`            | Machine setup (all platforms, Windows, MCP/OpenClaw, troubleshooting).                             |
+| `CONTRIBUTING.md`     | Contribution workflow, branch/PR guidance, and quality expectations.                               |
 
 `app/` one level deeper:
 
@@ -54,8 +55,8 @@
 - `app/cli/` — Command-line interface, onboarding wizard, local LLM helpers, and CLI tests support. Interactive terminal (TTY) loop: `app/cli/interactive_shell/`.
 - `app/constants/` — Shared prompt and other static constants.
 - `app/deployment/` — Single home for “deployment” code, split by concern:
-  - `app/deployment/methods/` — *How* you ship (Railway CLI, LangSmith/LangGraph).
-  - `app/deployment/operations/` — *Runtime / infra* around a deployment (health polling, EC2 output files, provider dry-run validation).
+    - `app/deployment/methods/` — _How_ you ship (Railway CLI, LangSmith/LangGraph).
+    - `app/deployment/operations/` — _Runtime / infra_ around a deployment (health polling, EC2 output files, provider dry-run validation).
 - `app/entrypoints/` — SDK and MCP entrypoints exposed to external runtimes.
 - `app/guardrails/` — Guardrail rules, evaluation engine, audit helpers, and CLI bindings.
 - `app/integrations/` — Integration config normalization, verification, selectors, store, and catalog logic.
@@ -70,6 +71,7 @@
 - `app/tools/` — Tool registry, decorator, base classes, per-tool packages, shared utilities, and registry helpers.
 - `app/types/` — Shared typed contracts for evidence, retrieval, and tool-related payloads.
 - `app/utils/` — Cross-cutting utility helpers used across the app and test harnesses.
+- `app/watch_dog/` — Watchdog feature: per-threshold Telegram alarm dispatch with cooldown, sitting on top of `app/utils/telegram_delivery.py`.
 - `app/main.py` and `app/webapp.py` — Application entrypoints for the CLI/runtime and web-facing surface.
 
 `tests/` is organized by capability boundary rather than by framework:

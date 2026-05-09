@@ -1,18 +1,43 @@
 """Post-processing: merge evidence and track hypotheses."""
 
 import json
+import logging
+import re
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 from app.nodes.investigate.execution.execute_actions import ActionExecutionResult
 from app.nodes.investigate.types import ExecutedHypothesis, FailedAction, PlanAudit
+from app.tools.utils.metric_summary import summarize_prometheus_metrics
+
+logger = logging.getLogger(__name__)
 
 MAX_RETRYABLE_ACTION_FAILURES = 2
 _NON_RETRYABLE_FAILURE_INDICATORS = (
     "typeerror",
+    "command not found",
     "missing required",
     "unknown action",
     "action not available",
     "invalid response",
+    "not configured",
+    "400",
+    "bad request",
+    "401",
+    "unauthorized",
+    "403",
+    "forbidden",
+)
+_OPENCLAW_NON_RETRYABLE_FAILURE_INDICATORS = (
+    "connection closed",
+    "could not connect",
+    "connect failed",
+    "econnrefused",
+    "gateway status",
+    "gateway run",
+    "gateway install",
+    "install the openclaw cli",
+    "tool_name is required",
 )
 _RETRYABLE_FAILURE_INDICATORS = (
     "timeout",
@@ -23,6 +48,9 @@ _RETRYABLE_FAILURE_INDICATORS = (
     "internal error",
     "500",
     "503",
+)
+_OPENCLAW_ACTION_NAMES = frozenset(
+    {"call_openclaw_tool", "list_openclaw_tools", "search_openclaw_conversations"}
 )
 
 
@@ -54,9 +82,13 @@ def _map_failed_tools(data: dict) -> dict:
     }
 
 
-def _classify_action_failure(error: str | None) -> str:
+def _classify_action_failure(action_name: str, error: str | None) -> str:
     error_text = (error or "").lower()
     if any(indicator in error_text for indicator in _NON_RETRYABLE_FAILURE_INDICATORS):
+        return "non_retryable"
+    if action_name in _OPENCLAW_ACTION_NAMES and any(
+        indicator in error_text for indicator in _OPENCLAW_NON_RETRYABLE_FAILURE_INDICATORS
+    ):
         return "non_retryable"
     if any(indicator in error_text for indicator in _RETRYABLE_FAILURE_INDICATORS):
         return "retryable"
@@ -89,7 +121,7 @@ def _build_failed_action_records(
             {
                 "action": action_name,
                 "error": result.error or "unknown",
-                "failure_kind": _classify_action_failure(result.error),
+                "failure_kind": _classify_action_failure(action_name, result.error),
                 "failure_count": failure_count,
                 "loop_count": investigation_loop_count,
             }
@@ -219,13 +251,106 @@ def _map_s3_object(data: dict) -> dict:
     }
 
 
-def _map_grafana_logs(data: dict) -> dict:
+def _timestamp_from_loki_ns(value: object) -> str:
+    try:
+        timestamp = int(float(str(value))) / 1_000_000_000
+    except (TypeError, ValueError):
+        return str(value or "")
+    return datetime.fromtimestamp(timestamp, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _derive_rds_events_from_grafana_logs(logs: list) -> list[dict]:
+    events: list[dict] = []
+    for log in logs:
+        if not isinstance(log, dict):
+            continue
+        source_type = str(log.get("source_type", "")).lower()
+        message = str(log.get("message", ""))
+        if source_type != "db-instance" and "db instance" not in message.lower():
+            continue
+        events.append(
+            {
+                "timestamp": _timestamp_from_loki_ns(log.get("timestamp")),
+                "message": message,
+                "source_type": log.get("source_type"),
+                "source_identifier": log.get("source_identifier"),
+            }
+        )
+    return events
+
+
+def _derive_performance_insights_from_grafana_logs(logs: list) -> dict:
+    observations: list[str] = []
+    top_sql: list[dict] = []
+    wait_events: list[dict] = []
+
+    for log in logs:
+        if not isinstance(log, dict):
+            continue
+        source_type = str(log.get("source_type", "")).lower()
+        message = str(log.get("message", ""))
+        is_pi = source_type == "aws_performance_insights" or message.startswith(
+            ("Top SQL Activity:", "Top Wait Event:")
+        )
+        if not is_pi:
+            continue
+        observations.append(message)
+
+        sql_match = re.match(
+            r"Top SQL Activity:\s*(?P<sql>.*?)\s*\|\s*Avg Load:\s*"
+            r"(?P<load>[0-9.]+)\s*AAS\s*\|\s*Waits:\s*(?P<waits>.*)",
+            message,
+        )
+        if sql_match:
+            top_sql.append(
+                {
+                    "sql": sql_match.group("sql"),
+                    "db_load": float(sql_match.group("load")),
+                    "wait_event": sql_match.group("waits"),
+                }
+            )
+            continue
+
+        wait_match = re.match(
+            r"Top Wait Event:\s*(?P<name>.*?)\s*\|\s*db_load_avg:\s*"
+            r"(?P<load>[0-9.]+)\s*AAS",
+            message,
+        )
+        if wait_match:
+            wait_events.append(
+                {
+                    "name": wait_match.group("name"),
+                    "db_load": float(wait_match.group("load")),
+                }
+            )
+
+    if not observations:
+        return {}
     return {
+        "observations": observations,
+        "top_sql": top_sql,
+        "wait_events": wait_events,
+    }
+
+
+def _map_grafana_logs(data: dict) -> dict:
+    logs = data.get("logs", [])
+    mapped: dict[str, object] = {
         "grafana_logs": data.get("logs", []),
         "grafana_error_logs": data.get("error_logs", []),
         "grafana_logs_query": data.get("query", ""),
         "grafana_logs_service": data.get("service_name", ""),
     }
+
+    rds_events = _derive_rds_events_from_grafana_logs(logs)
+    if rds_events:
+        mapped["aws_rds_events"] = rds_events
+
+    performance_insights = _derive_performance_insights_from_grafana_logs(logs)
+    if performance_insights:
+        mapped["aws_performance_insights"] = performance_insights
+
+    return mapped
 
 
 def _map_grafana_traces(data: dict) -> dict:
@@ -236,12 +361,60 @@ def _map_grafana_traces(data: dict) -> dict:
     }
 
 
-def _map_grafana_metrics(data: dict) -> dict:
+def _build_rds_cloudwatch_metrics(summaries: list[dict]) -> dict:
+    rds_summaries = [
+        summary
+        for summary in summaries
+        if str(summary.get("raw_metric_name", "")).startswith("aws_rds_")
+    ]
+    if not rds_summaries:
+        return {}
+
+    db_instance = ""
+    metrics: list[dict] = []
+    observations: list[str] = []
+    for summary in rds_summaries:
+        labels = summary.get("labels", {})
+        if isinstance(labels, dict) and not db_instance:
+            db_instance = str(
+                labels.get("dbinstanceidentifier")
+                or labels.get("db_instance_identifier")
+                or labels.get("db_instance")
+                or ""
+            )
+        metrics.append(
+            {
+                "metric_name": summary.get("metric_name", "unknown"),
+                "summary": summary.get("summary", ""),
+                "labels": labels if isinstance(labels, dict) else {},
+                "datapoint_count": summary.get("datapoint_count", 0),
+            }
+        )
+        if summary.get("summary"):
+            observations.append(str(summary["summary"]))
+
     return {
-        "grafana_metrics": data.get("metrics", []),
+        "db_instance_identifier": db_instance,
+        "metrics": metrics,
+        "observations": observations,
+    }
+
+
+def _map_grafana_metrics(data: dict) -> dict:
+    metrics = data.get("metrics", [])
+    summaries = summarize_prometheus_metrics(metrics)
+    mapped: dict[str, object] = {
+        "grafana_metrics": metrics,
+        "grafana_metric_summaries": summaries,
         "grafana_metric_name": data.get("metric_name", ""),
         "grafana_metrics_service": data.get("service_name", ""),
     }
+
+    rds_metrics = _build_rds_cloudwatch_metrics(summaries)
+    if rds_metrics:
+        mapped["aws_cloudwatch_metrics"] = rds_metrics
+
+    return mapped
 
 
 def _map_grafana_alert_rules(data: dict) -> dict:
@@ -416,6 +589,54 @@ def _map_argocd_application_diff(data: dict) -> dict:
     }
 
 
+def _map_helm_list_releases(data: dict) -> dict:
+    releases = data.get("releases", [])
+    if not isinstance(releases, list):
+        releases = []
+    return {
+        "helm_releases": releases,
+        "helm_list_all_namespaces": bool(data.get("all_namespaces", False)),
+        "helm_list_namespace": str(data.get("namespace", "") or ""),
+    }
+
+
+def _map_helm_release_status(data: dict) -> dict:
+    return {
+        "helm_release_status": data.get("status") or {},
+        "helm_release_name": str(data.get("release", "") or ""),
+        "helm_release_namespace": str(data.get("namespace", "") or ""),
+    }
+
+
+def _map_helm_release_history(data: dict) -> dict:
+    history = data.get("history", [])
+    if not isinstance(history, list):
+        history = []
+    return {
+        "helm_release_history": history,
+        "helm_release_name": str(data.get("release", "") or ""),
+        "helm_release_namespace": str(data.get("namespace", "") or ""),
+    }
+
+
+def _map_helm_get_release_values(data: dict) -> dict:
+    return {
+        "helm_release_values": data.get("values") or {},
+        "helm_values_all_requested": bool(data.get("all_values", False)),
+        "helm_release_name": str(data.get("release", "") or ""),
+        "helm_release_namespace": str(data.get("namespace", "") or ""),
+    }
+
+
+def _map_helm_get_release_manifest(data: dict) -> dict:
+    return {
+        "helm_release_manifest": str(data.get("manifest", "") or ""),
+        "helm_manifest_truncated": bool(data.get("truncated", False)),
+        "helm_release_name": str(data.get("release", "") or ""),
+        "helm_release_namespace": str(data.get("namespace", "") or ""),
+    }
+
+
 def _map_alertmanager_alerts(data: dict) -> dict:
     return {
         "alertmanager_alerts": data.get("alerts") or [],
@@ -484,6 +705,48 @@ def _map_eks_deployment_status(data: dict) -> dict:
     }
 
 
+def _map_ec2_instances_by_tag(data: dict) -> dict:
+    return {
+        "ec2_instances": data.get("instances", []),
+        "ec2_instances_by_tier": data.get("by_tier", {}),
+        "ec2_tiers_detected": data.get("tiers_detected", []),
+        "ec2_total_instances": data.get("total_instances", 0),
+        # Pre-computed summary block — by_tier_counts, primary_tier, vpcs_in_scope,
+        # azs_in_scope. Pass-through is the whole point of this tool: the agent
+        # quotes these directly without iterating instance lists.
+        "ec2_instances_summary": data.get("summary", {}),
+    }
+
+
+def _map_elb_target_health(data: dict) -> dict:
+    return {
+        "elb_target_groups": data.get("target_groups", []),
+        "elb_healthy_targets": data.get("healthy_targets", []),
+        "elb_unhealthy_targets": data.get("unhealthy_targets", []),
+        "elb_target_instance_ids": data.get("instance_ids", []),
+        # Pre-computed summary block — total_targets, healthy_count, unhealthy_count,
+        # healthy_ratio_pct, unhealthy_states, target_group_count.
+        "elb_target_health_summary": data.get("summary", {}),
+        # Per-TG describe_target_health failures. Non-empty means the agent
+        # is reading partial coverage and must NOT cite a healthy_ratio_pct
+        # without acknowledging the gap. The mapper still runs on
+        # `result.success=True` regardless of `data["available"]`, so we
+        # forward the failure list explicitly.
+        "elb_api_errors": data.get("api_errors", []),
+    }
+
+
+def _map_cloudopsbench_tool(data: dict) -> dict:
+    evidence_item = {
+        "action_name": data.get("action_name"),
+        "action_input": data.get("action_input", {}),
+        "output": data.get("output"),
+        "cache_key": data.get("cache_key", ""),
+        "cache_hit": bool(data.get("cache_hit", False)),
+    }
+    return {"cloudopsbench_evidence": [evidence_item]}
+
+
 EVIDENCE_MAPPERS: dict[str, Callable[[dict], dict]] = {
     "get_failed_jobs": _map_failed_jobs,
     "get_failed_tools": _map_failed_tools,
@@ -518,6 +781,11 @@ EVIDENCE_MAPPERS: dict[str, Callable[[dict], dict]] = {
     "get_git_deploy_timeline": _map_git_deploy_timeline,
     "argocd_application_status": _map_argocd_application_status,
     "argocd_application_diff": _map_argocd_application_diff,
+    "helm_list_releases": _map_helm_list_releases,
+    "helm_release_status": _map_helm_release_status,
+    "helm_release_history": _map_helm_release_history,
+    "helm_get_release_values": _map_helm_get_release_values,
+    "helm_get_release_manifest": _map_helm_get_release_manifest,
     "alertmanager_alerts": _map_alertmanager_alerts,
     "alertmanager_silences": _map_alertmanager_silences,
     "list_eks_pods": _map_eks_pods,
@@ -526,6 +794,18 @@ EVIDENCE_MAPPERS: dict[str, Callable[[dict], dict]] = {
     "get_eks_node_health": _map_eks_node_health,
     "get_eks_pod_logs": _map_eks_pod_logs,
     "get_eks_deployment_status": _map_eks_deployment_status,
+    "ec2_instances_by_tag": _map_ec2_instances_by_tag,
+    "get_elb_target_health": _map_elb_target_health,
+    "GetResources": _map_cloudopsbench_tool,
+    "DescribeResource": _map_cloudopsbench_tool,
+    "GetClusterConfiguration": _map_cloudopsbench_tool,
+    "GetAlerts": _map_cloudopsbench_tool,
+    "GetErrorLogs": _map_cloudopsbench_tool,
+    "GetRecentLogs": _map_cloudopsbench_tool,
+    "GetServiceDependencies": _map_cloudopsbench_tool,
+    "GetAppYAML": _map_cloudopsbench_tool,
+    "CheckServiceConnectivity": _map_cloudopsbench_tool,
+    "CheckNodeServiceStatus": _map_cloudopsbench_tool,
 }
 
 
@@ -555,7 +835,16 @@ def merge_evidence(
 
         mapper = EVIDENCE_MAPPERS.get(action_name)
         if mapper:
-            evidence.update(mapper(result.data))
+            mapped = mapper(result.data)
+            if "cloudopsbench_evidence" in mapped:
+                existing = evidence.get("cloudopsbench_evidence", [])
+                existing_items = existing if isinstance(existing, list) else []
+                evidence["cloudopsbench_evidence"] = [
+                    *existing_items,
+                    *mapped["cloudopsbench_evidence"],
+                ]
+            else:
+                evidence.update(mapped)
 
     return evidence
 
@@ -742,6 +1031,29 @@ def build_evidence_summary(execution_results: dict[str, ActionExecutionResult]) 
                 app_name = str(data.get("application_name", "")).strip() or "?"
                 drift = str(bool(data.get("drift_detected", False))).lower()
                 summary_parts.append(f"argocd:{app_name} drift {drift}")
+            elif action_name == "helm_list_releases" and data.get("releases") is not None:
+                count = len(data.get("releases") or [])
+                scope = "all-ns" if data.get("all_namespaces") else (data.get("namespace") or "?")
+                summary_parts.append(f"helm:{count} releases ({scope})")
+            elif action_name == "helm_release_status" and data.get("status") is not None:
+                rel = str(data.get("release", "")).strip() or "?"
+                status_obj = data.get("status")
+                st = status_obj if isinstance(status_obj, dict) else {}
+                info_obj = st.get("info")
+                info = info_obj if isinstance(info_obj, dict) else {}
+                status = str(info.get("status", "") or "").strip() or "unknown"
+                summary_parts.append(f"helm:{rel} status {status}")
+            elif action_name == "helm_release_history" and data.get("history") is not None:
+                rel = str(data.get("release", "")).strip() or "?"
+                summary_parts.append(f"helm:{rel} history {len(data.get('history') or [])} revs")
+            elif action_name == "helm_get_release_values" and data.get("values") is not None:
+                rel = str(data.get("release", "")).strip() or "?"
+                summary_parts.append(f"helm:{rel} values keys {len(data.get('values') or {})}")
+            elif action_name == "helm_get_release_manifest" and data.get("manifest") is not None:
+                rel = str(data.get("release", "")).strip() or "?"
+                lines = len(str(data.get("manifest", "")).splitlines())
+                trunc = " truncated" if data.get("truncated") else ""
+                summary_parts.append(f"helm:{rel} manifest {lines} lines{trunc}")
             elif action_name == "alertmanager_alerts":
                 firing_count = len(data.get("firing_alerts") or [])
                 total = data.get("total", 0)
@@ -752,11 +1064,15 @@ def build_evidence_summary(execution_results: dict[str, ActionExecutionResult]) 
                 summary_parts.append(f"alertmanager:{total} silences ({active_count} active)")
             elif action_name == "get_eks_deployment_status" and data.get("deployment_name"):
                 summary_parts.append("eks:deployment status retrieved")
+            elif data.get("source") == "cloudopsbench":
+                action = data.get("action_name") or action_name
+                cache_state = "hit" if data.get("cache_hit") else "miss"
+                summary_parts.append(f"cloudopsbench:{action} {cache_state}")
         else:
             # Log action failures for debugging
             error_msg = f"{action_name}:FAILED({result.error[:50] if result.error else 'unknown'})"
             errors.append(error_msg)
-            print(f"[WARNING] Action failed: {error_msg}")
+            logger.warning("Action failed: %s", error_msg)
 
     if errors:
         summary = ", ".join(summary_parts) if summary_parts else "No evidence collected"

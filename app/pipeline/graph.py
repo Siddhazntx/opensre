@@ -1,7 +1,5 @@
 """Unified agent pipeline — wires nodes and edges into a LangGraph."""
 
-from __future__ import annotations
-
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
@@ -23,6 +21,7 @@ from app.nodes.chat import (
 from app.nodes.evaluate_opensre import node_opensre_llm_eval
 from app.nodes.investigate.merge import merge_hypothesis_results
 from app.nodes.investigate.parallel import node_investigate_hypothesis
+from app.pipeline.langgraph_node_adapter import _accept_langgraph_config
 from app.pipeline.routing import (
     distribute_hypotheses,
     route_after_extract,
@@ -39,22 +38,22 @@ def build_graph(config: None = None) -> CompiledStateGraph:
     _ = config
     graph = StateGraph(AgentState)
 
-    graph.add_node("inject_auth", inject_auth_node)
+    graph.add_node("inject_auth", _accept_langgraph_config(inject_auth_node))
 
     graph.add_node("router", router_node)
-    graph.add_node("chat_agent", chat_agent_node)  # type: ignore[arg-type]
-    graph.add_node("general", general_node)  # type: ignore[arg-type]
+    graph.add_node("chat_agent", _accept_langgraph_config(chat_agent_node))
+    graph.add_node("general", _accept_langgraph_config(general_node))
     graph.add_node("tool_executor", tool_executor_node)
 
-    graph.add_node("extract_alert", node_extract_alert)
-    graph.add_node("resolve_integrations", node_resolve_integrations)
-    graph.add_node("plan_actions", node_plan_actions)
+    graph.add_node("extract_alert", _accept_langgraph_config(node_extract_alert))
+    graph.add_node("resolve_integrations", _accept_langgraph_config(node_resolve_integrations))
+    graph.add_node("plan_actions", _accept_langgraph_config(node_plan_actions))
     graph.add_node("investigate_hypothesis", node_investigate_hypothesis)
     graph.add_node("merge_hypothesis_results", merge_hypothesis_results)
-    graph.add_node("diagnose", node_diagnose_root_cause)
-    graph.add_node("adapt_window", node_adapt_window)
+    graph.add_node("diagnose", _accept_langgraph_config(node_diagnose_root_cause))
+    graph.add_node("adapt_window", _accept_langgraph_config(node_adapt_window))
     graph.add_node("opensre_eval", node_opensre_llm_eval)
-    graph.add_node("publish", node_publish_findings)
+    graph.add_node("publish", _accept_langgraph_config(node_publish_findings))
 
     graph.set_entry_point("inject_auth")
 

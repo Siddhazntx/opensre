@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from app.pipeline.runners import run_investigation
+from tests.synthetic.mock_aws_backend import FixtureAWSBackend
 from tests.synthetic.mock_grafana_backend.backend import FixtureGrafanaBackend
 from tests.synthetic.rds_postgres.scenario_loader import (
     SUITE_DIR,
@@ -100,17 +101,30 @@ def _build_resolved_integrations(
     Accepts an optional pre-built grafana_backend (e.g. SelectiveGrafanaBackend)
     so callers can instrument the backend before injection.  Falls back to a fresh
     FixtureGrafanaBackend when use_mock_grafana=True and no backend is provided.
+
+    When the scenario declares EC2/ELB evidence, also injects a FixtureAWSBackend
+    under ``aws.ec2_backend`` so the EC2/RDS topology tools can serve fixture
+    data without colliding with the EKS ``_backend`` slot.
     """
-    if not use_mock_grafana and grafana_backend is None:
+    has_aws_topology = bool(
+        fixture.evidence.ec2_instances_by_tag is not None
+        or fixture.evidence.elb_target_health is not None
+    )
+    if not use_mock_grafana and grafana_backend is None and not has_aws_topology:
         return None
-    backend = grafana_backend or FixtureGrafanaBackend(fixture)
-    return {
-        "grafana": {
+    integrations: dict[str, Any] = {}
+    if use_mock_grafana or grafana_backend is not None:
+        integrations["grafana"] = {
             "endpoint": "",
             "api_key": "",
-            "_backend": backend,
+            "_backend": grafana_backend or FixtureGrafanaBackend(fixture),
         }
-    }
+    if has_aws_topology:
+        integrations["aws"] = {
+            "region": fixture.metadata.region,
+            "ec2_backend": FixtureAWSBackend(fixture),
+        }
+    return integrations or None
 
 
 def _normalize_text(value: str) -> str:
@@ -327,7 +341,30 @@ def score_result(
     # internal evidence keys (grafana_metrics, grafana_logs) set by _map_grafana_*.
     if not failure_reason and answer_key.required_evidence_sources:
         evidence = final_state.get("evidence") or {}
+        performance_insights_tokens = (
+            "top sql activity",
+            "avg load",
+            "aas",
+            "db load",
+            "walwrite",
+            "clientread",
+        )
+
         for source_key in answer_key.required_evidence_sources:
+            if source_key == "aws_performance_insights":
+                state_key = _EVIDENCE_KEY_MAP.get(source_key, source_key)
+
+                has_state_evidence = bool(evidence.get(state_key))
+                has_pi_signal = any(
+                    token in normalized_output for token in performance_insights_tokens
+                )
+
+                if not (has_state_evidence and has_pi_signal):
+                    failure_reason = f"required evidence not gathered: {source_key!r}"
+                    break
+
+                continue
+
             state_key = _EVIDENCE_KEY_MAP.get(source_key, source_key)
             if not evidence.get(state_key):
                 failure_reason = f"required evidence not gathered: {source_key!r}"

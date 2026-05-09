@@ -8,15 +8,14 @@ import click
 from rich.console import Console
 from rich.text import Text
 
-_ASCII_HEADER = """\
-  ___  ____  _____ _   _ ____  ____  _____
- / _ \\|  _ \\| ____| \\ | / ___||  _ \\| ____|
-| | | | |_) |  _| |  \\| \\___ \\| |_) |  _|
-| |_| |  __/| |___| |\\  |___) |  _ <| |___
- \\___/|_|   |_____|_| \\_|____/|_| \\_\\_____|"""
+from app.cli.interactive_shell.banner import build_ready_panel
+from app.cli.interactive_shell.theme import BRAND, DIM, TEXT
 
 _LANDING_EXAMPLES: tuple[tuple[str, str], ...] = (
-    ("opensre agent", "Launch the interactive SRE agent terminal"),
+    (
+        'opensre "investigate high latency in checkout-api"',
+        "Start the interactive agent with a prompt",
+    ),
     ("opensre onboard", "Configure LLM provider and integrations"),
     ("opensre investigate -i alert.json", "Run RCA against an alert payload"),
     ("opensre deploy ec2", "Deploy investigation server on AWS EC2"),
@@ -53,7 +52,18 @@ def _commands_from_group(group: click.Group) -> tuple[tuple[str, str], ...]:
 
 def _render_usage(console: Console) -> None:
     console.print(
-        Text.assemble(("  Usage: "), ("opensre", "bold white"), (" [OPTIONS] COMMAND [ARGS]..."))
+        Text.assemble(
+            ("  Usage: "),
+            ("opensre", f"bold {TEXT}"),
+            (" [OPTIONS] [COMMAND] [ARGS]..."),
+        )
+    )
+    console.print(
+        Text.assemble(
+            ("  ", ""),
+            ("No COMMAND", DIM),
+            (": start the interactive shell when stdin/stdout are TTYs.", DIM),
+        )
     )
 
 
@@ -64,15 +74,19 @@ def _render_rows(
     rows: Sequence[tuple[str, str]],
     width: int,
 ) -> None:
-    console.print(Text.assemble((f"  {title}:", "bold white")))
+    console.print(Text.assemble((f"  {title}:", f"bold {TEXT}")))
     for label, description in rows:
-        console.print(Text.assemble(("    ", ""), (f"{label:<{width}}", "bold cyan"), description))
+        console.print(
+            Text.assemble(("    ", ""), (f"{label:<{width}}", f"bold {BRAND}"), description)
+        )
 
 
 def render_help(group: click.Group) -> None:
     """Render the root help view, deriving the command list from the live Click group."""
     console = Console(highlight=False)
     commands = _commands_from_group(group)
+    console.print()
+    console.print(build_ready_panel(console))
     console.print()
     _render_usage(console)
     console.print()
@@ -86,9 +100,7 @@ def render_landing() -> None:
     """Render the root landing page shown with no subcommand."""
     console = Console(highlight=False)
     console.print()
-    for line in _ASCII_HEADER.splitlines():
-        console.print(Text.assemble(("  ", ""), (line, "bold cyan")))
-    console.print()
+    console.print(build_ready_panel(console))
     console.print(
         Text.assemble(
             ("  ", ""),

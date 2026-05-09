@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import time
 from collections.abc import Callable
@@ -10,13 +11,18 @@ from typing import Any
 import questionary.question
 from prompt_toolkit.key_binding import KeyBindings, KeyBindingsBase, merge_key_bindings
 from prompt_toolkit.keys import Keys
+from rich.console import Console
+
+from app.cli.interactive_shell.theme import DIM
 
 _escape_patch_installed: list[bool] = [False]
 _ctrl_c_patch_installed: list[bool] = [False]
 
 # Shared timestamp of the last Ctrl+C press (None = never pressed).
 _last_ctrl_c: list[float | None] = [None]
-_CTRL_C_EXIT_WINDOW: float = 2.0
+
+CTRL_C_DOUBLE_PRESS_WINDOW_S: float = 2.0
+_CTRL_C_EXIT_WINDOW: float = CTRL_C_DOUBLE_PRESS_WINDOW_S
 
 
 class _HardQuitInterrupt(KeyboardInterrupt):
@@ -111,9 +117,20 @@ def _with_ctrl_c_double_exit(
     def _patched_ask(*args: Any, **kwargs: Any) -> Any:
         while True:
             try:
-                # unsafe_ask() propagates KeyboardInterrupt instead of
-                # swallowing it the way ask() does.
-                result = question.unsafe_ask(*args, **kwargs)
+                # unsafe_ask() → application.run() → asyncio.run(), which
+                # raises RuntimeError when called from inside a running event
+                # loop (e.g. the async REPL). Use in_thread=True so
+                # prompt_toolkit creates its own event loop in a background
+                # thread instead.
+                try:
+                    asyncio.get_running_loop()
+                    _in_event_loop = True
+                except RuntimeError:
+                    _in_event_loop = False
+                if _in_event_loop:
+                    result = question.application.run(in_thread=True)
+                else:
+                    result = question.unsafe_ask(*args, **kwargs)
                 _last_ctrl_c[0] = None  # reset on clean exit so next prompt starts fresh
                 return result
             except KeyboardInterrupt as exc:
@@ -127,6 +144,22 @@ def _with_ctrl_c_double_exit(
                 print("\n(Press Ctrl+C again to exit)", flush=True)
                 # Loop: re-run the same application (Application.run() is
                 # safe to call again after a clean exit or KeyboardInterrupt).
+            except (OSError, KeyError) as exc:
+                # The event loop / selector can fail on platforms where
+                # epoll or select cannot handle terminal file descriptors.
+                # Bail out with a clear message instead of a cryptic
+                # traceback.
+                import logging
+
+                logging.getLogger(__name__).debug(
+                    "interactive prompt selector error: %s", exc, exc_info=True
+                )
+                print(
+                    "\nThe interactive prompt could not be displayed due to a "
+                    "terminal I/O error on this platform.",
+                    flush=True,
+                )
+                sys.exit(1)
 
     question.ask = _patched_ask  # type: ignore[method-assign]
     return question
@@ -142,6 +175,21 @@ def _wrap_question_ctrl_c(
     wrapped.__doc__ = orig.__doc__
     wrapped.__qualname__ = getattr(orig, "__qualname__", orig.__name__)
     return wrapped
+
+
+def repl_reset_ctrl_c_gate() -> None:
+    _last_ctrl_c[0] = None
+
+
+def repl_prompt_note_ctrl_c(console: Console) -> bool:
+    now = time.monotonic()
+    if _last_ctrl_c[0] is not None and now - _last_ctrl_c[0] <= _CTRL_C_EXIT_WINDOW:
+        console.print(f"[{DIM}]Goodbye![/]")
+        _last_ctrl_c[0] = None
+        return True
+    _last_ctrl_c[0] = now
+    console.print(f"[{DIM}](Press Ctrl+C again to exit)[/]")
+    return False
 
 
 def install_questionary_ctrl_c_double_exit() -> None:

@@ -79,7 +79,14 @@
               "integrations-overview",
               "remote-runtime-investigation",
               "masking",
+              "interactive-shell-privacy",
               "multi-instance-integrations"
+            ]
+          },
+          {
+            "group": "LLM providers",
+            "pages": [
+              "llm-providers"
             ]
           },
           {
@@ -93,6 +100,7 @@
               "datadog",
               "grafana",
               "honeycomb",
+              "incident_io",
               "opsgenie",
               "sentry",
               "splunk"
@@ -104,13 +112,22 @@
             "pages": [
               "aws",
               "bitbucket",
-              "discord",
               "github",
               "gitlab",
               "google-docs",
+              "helm",
               "jira",
-              "slack",
               "vercel"
+            ]
+          },
+          {
+            "group": "Messaging",
+            "expanded": true,
+            "pages": [
+              "messaging/index",
+              "messaging/slack",
+              "messaging/discord",
+              "messaging/telegram"
             ]
           },
           {
@@ -122,9 +139,11 @@
               "mongodb",
               "mysql",
               "openclaw",
+              "opensearch",
               "postgresql",
               "prefect",
-              "rabbitmq"
+              "rabbitmq",
+              "rds"
             ]
           }
         ]
