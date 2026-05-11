@@ -252,7 +252,7 @@ class OpenAILLMClient:
         self._base_url = base_url
         self._api_key_env = api_key_env
         self._provider_label = api_key_env.removesuffix("_API_KEY").replace("_", " ").title()
-        self._client = OpenAI(api_key=api_key, base_url=base_url, timeout=60.0)
+        self._client = OpenAI(api_key=api_key, base_url=base_url, timeout=180.0)
         self._model = model
         self._max_tokens = max_tokens
         self._temperature = temperature
@@ -274,7 +274,7 @@ class OpenAILLMClient:
             )
         if api_key != self._api_key:
             self._api_key = api_key
-            self._client = OpenAI(api_key=api_key, base_url=self._base_url, timeout=60.0)
+            self._client = OpenAI(api_key=api_key, base_url=self._base_url, timeout=180.0)
 
     def invoke(self, prompt_or_messages: Any) -> LLMResponse:
         self._ensure_client()
@@ -315,7 +315,8 @@ class OpenAILLMClient:
                 last_err = err
                 if attempt == max_attempts - 1:
                     raise RuntimeError(
-                        "LLM API request failed after multiple retries. Try again in a few seconds."
+                        f"LLM API request failed after {max_attempts} retires. "
+                        f"Last error: {type(err).__name__}: {err}"
                     ) from err
                 time.sleep(backoff_seconds)
                 backoff_seconds *= 2
