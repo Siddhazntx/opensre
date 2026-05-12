@@ -17,13 +17,13 @@ from __future__ import annotations
 
 import os
 import queue
+import sys
 import threading
 import time
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-import sys
 
 from app.agents import tail as tail_mod
 from app.agents.tail import (
