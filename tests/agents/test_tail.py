@@ -23,6 +23,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import sys
 
 from app.agents import tail as tail_mod
 from app.agents.tail import (
@@ -161,6 +162,7 @@ class TestParseLsofFd1:
 
 
 class TestResolveLinuxTarget:
+    @pytest.mark.skipif(sys.platform == "win32", reason="Windows uses backslashes, not POSIX paths")
     def test_regular_file_target(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         log = tmp_path / "out.log"
         log.write_text("")
@@ -215,6 +217,7 @@ class TestResolveLinuxTarget:
         with pytest.raises(AttachUnsupported, match="no such pid"):
             _resolve_linux_target(123)
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Windows uses backslashes, not POSIX paths")
     def test_target_is_directory_rejected(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -409,6 +412,7 @@ class TestAttachSession:
             assert b"hello" in sess.buffer.snapshot()
         assert not sess._thread.is_alive()  # noqa: SLF001 (test inspecting lifecycle)
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Windows locks open files and prevents renaming")
     def test_reader_follows_inode_through_rename(self, tmp_path: Path) -> None:
         # logrotate-style: the path is renamed away after attach, but the
         # producer keeps writing to the original inode. The reader holds
