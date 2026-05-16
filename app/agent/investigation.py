@@ -166,25 +166,16 @@ class ConnectedInvestigationAgent:
                 response = llm.invoke(messages, system=system, tools=tool_schemas)
             except RuntimeError as err:
                 err_msg = str(err).lower()
-                if (
-                    "not found" in err_msg
-                    or "404" in err_msg
-                    or "model_not_found" in err_msg
-                ):
+                if "not found" in err_msg or "404" in err_msg or "model_not_found" in err_msg:
                     error_msg = (
                         "Error: The AI model was not found (404). "
                         "If using a local LLM, verify the model name in your .env file."
                     )
-                    tracker.complete(
-                        "investigation_agent",
-                        message="Failed: Model not found"
-                    )
+                    tracker.complete("investigation_agent", message="Failed: Model not found")
                     updates = {
                         "root_cause": error_msg,
                         "root_cause_category": "Configuration Error",
-                        "causal_chain": [
-                            f"Model API returned error: {str(err)}"
-                        ],
+                        "causal_chain": [f"Model API returned error: {str(err)}"],
                         "validated_claims": [],
                         "non_validated_claims": [],
                         "remediation_steps": [
@@ -196,9 +187,7 @@ class ConnectedInvestigationAgent:
                         "validity_score": 0.0,
                         "investigation_recommendations": [],
                         "evidence": evidence,
-                        "evidence_entries": [
-                            e.model_dump() for e in evidence_entries
-                        ],
+                        "evidence_entries": [e.model_dump() for e in evidence_entries],
                         "agent_messages": messages,
                         "executed_hypotheses": executed_hypotheses,
                     }
