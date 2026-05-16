@@ -164,14 +164,15 @@ class ConnectedInvestigationAgent:
             _emit("llm_start", {"iteration": iteration})
             try:
                 response = llm.invoke(messages, system=system, tools=tool_schemas)
+
             except RuntimeError as err:
                 err_msg = str(err).lower()
-                if "not found" in err_msg or "404" in err_msg or "model_not_found" in err_msg:
+                if ("model" in err_msg and "not found" in err_msg) or "404" in err_msg:
                     error_msg = (
                         "Error: The AI model was not found (404). "
                         "If using a local LLM, verify the model name in your .env file."
                     )
-                    tracker.complete("investigation_agent", message="Failed: Model not found")
+                    tracker.error("investigation_agent", message="Failed: Model not found")
                     updates = {
                         "root_cause": error_msg,
                         "root_cause_category": "Configuration Error",
