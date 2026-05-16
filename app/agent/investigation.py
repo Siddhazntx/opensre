@@ -173,6 +173,14 @@ class ConnectedInvestigationAgent:
                         "If using a local LLM, verify the model name in your .env file."
                     )
                     tracker.error("investigation_agent", message="Failed: Model not found")
+                    _emit(
+                        "agent_end",
+                        {
+                            "root_cause": error_msg,
+                            "validity_score": 0.0,
+                            "root_cause_category": "Configuration Error",
+                        },
+                    )
                     updates = {
                         "root_cause": error_msg,
                         "root_cause_category": "Configuration Error",
