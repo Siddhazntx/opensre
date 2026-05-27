@@ -42,7 +42,7 @@ Right-sizing helps organizations:
 
 To perform right-sizing investigations, OpenSRE leverages your existing metric stores.
 
-Ensure you have at least one of the following integrations configured.
+Ensure you have at least one of the following integrations configured:
 
 ### Prometheus
 
@@ -54,7 +54,7 @@ OpenSRE queries metrics from:
 - `node-exporter`
 - `cadvisor`
 
-This allows comparison between configured Pod requests and actual runtime usage using metrics such as:
+This allows comparison between configured Pod requests/limits and actual runtime usage using metrics such as:
 
 - `container_cpu_usage_seconds_total`
 - `container_memory_working_set_bytes`
@@ -102,4 +102,46 @@ You can trigger right-sizing workflows in the OpenSRE interactive shell using na
 Analyze all EC2 instances in the `us-east-1` production account.
 Identify instances where max CPU utilization has not exceeded 15%
 and memory usage stayed under 30% over the last 14 days.
+Return a table with: instance id, instance type, average CPU, max CPU, average memory, max memory, launch date, and a recommended instance type when applicable.
 ```
+
+### ECS Investigation
+
+```text
+Analyze ECS services in the `prod-ecs` cluster over the last 14 days.
+Identify task definitions and services where configured CPU or memory reservations
+are consistently under-utilized (e.g. 25% of reservation or lower on the 95th percentile).
+Return service name, task definition, current reservation (CPU/memory), 95th percentile usage, and suggested reservation adjustments.
+```
+
+### Kubernetes Investigation
+
+```text
+Analyze Kubernetes namespaces `production` and `staging` for pods with over-provisioned requests/limits.
+Compare container `requests` and `limits` to observed runtime usage (95th percentile) over the last 14 days.
+List pods where request-to-usage ratio exceeds 4x (or 2x for critical workloads), and suggest new request/limit values.
+Also flag containers that show OOMKilled events or sustained CPU throttling for further investigation.
+```
+
+### Example: CLI Output
+
+```text
+> right-size analyze --target ec2 --region us-east-1 --window 14d
+Found 42 underutilized instances in account/region.
+i-0abcd1234efgh  t3.large  avg_cpu: 8%  max_cpu: 12%  avg_mem: 22%  recommended: t3.medium
+i-0wxyz7890lmno  m5.xlarge avg_cpu: 6%  max_cpu: 11%  avg_mem: 18%  recommended: m5.large
+
+Estimated monthly savings (after safe canary rollout): ~$1,200
+```
+
+## Actionable Next Steps
+
+- Run a discovery pass in a non-production account to validate recommendations and identify false positives.
+- Create small, incremental change sets (canary/gradual downsize) rather than global mass changes.
+- Monitor the changed instances/pods for 7–14 days and roll back if sustained CPU or memory exceed 80%.
+- Integrate periodic right-sizing runs into your cost ops pipeline and add alerts for unexpected regression.
+- Document any manual adjustments in the runbook and record rationale for future audits.
+
+---
+
+If you want, I can also add links to example Grafana/Prometheus queries and a short runbook snippet for performing canary downsizing.
