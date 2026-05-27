@@ -1,12 +1,104 @@
 ---
-title: "Right Sizing"
-description: "Optimize resource allocation based on actual usage patterns"
+title: "Right-Sizing Infrastructure"
+description: "Identify over-provisioned and under-provisioned resources to optimize cloud spend using OpenSRE."
 ---
 
-Right-Sizing in Tracer optimizes scientific compute by using actual CPU and RAM usage from previous runs rather than static rules or guesswork. After each workflow execution, Tracer analyzes per-step utilization and compares it with current cloud instance pricing to recommend the most cost-efficient instance for the next run.
+# Right-Sizing Infrastructure with OpenSRE
 
-![Rightsizing](/images/Rightsizing.png)
+In modern cloud environments, engineering teams frequently default to larger Amazon EC2 instances, generous ECS task sizes, or high Kubernetes CPU and Memory requests to ensure stability.
 
-Tracer uses statistical models to predict RAM requirements and account for variability, minimizing memory-related failures that AWS’s native tools cannot anticipate. The system detects idle CPU, excess memory headroom, and under-provisioned configurations, then maps each workflow to an instance type that fits both performance and cost.
+While this prevents out-of-memory (OOM) errors and CPU throttling, it creates a massive anti-pattern: chronic over-provisioning.
 
-As more runs complete, recommendations become increasingly accurate, lowering compute spend, reducing over-provisioning, and preventing failures caused by mis-sized infrastructure.
+Over time, these under-utilized EC2, ECS, and Kubernetes workloads accumulate, driving unnecessary and bloated cloud expenditure.
+
+Right-sizing is the SRE practice of continuously analyzing actual usage patterns and adjusting resource allocations to match reality.
+
+OpenSRE automates this workflow by directly querying your observability stack, running statistical analysis on historical telemetry, and surfacing exact CPU and memory headroom metrics.
+
+## Why Right-Sizing Matters
+
+Infrastructure is commonly over-provisioned because teams optimize for reliability during production incidents and rarely revisit sizing decisions later.
+
+This leads to:
+
+- Idle EC2 instances
+- Oversized ECS task definitions
+- Excessive Kubernetes CPU requests
+- Wasted memory reservations
+- Poor autoscaling efficiency
+
+Without continuous optimization, infrastructure waste grows significantly over time.
+
+Right-sizing helps organizations:
+
+- Reduce monthly cloud expenditure
+- Improve Kubernetes cluster utilization
+- Increase scheduling efficiency
+- Prevent infrastructure sprawl
+- Optimize autoscaling behavior
+- Improve operational visibility
+
+## Supported Telemetry Integrations
+
+To perform right-sizing investigations, OpenSRE leverages your existing metric stores.
+
+Ensure you have at least one of the following integrations configured.
+
+### Prometheus
+
+The standard for Kubernetes workloads.
+
+OpenSRE queries metrics from:
+
+- `kube-state-metrics`
+- `node-exporter`
+- `cadvisor`
+
+This allows comparison between configured Pod requests and actual runtime usage using metrics such as:
+
+- `container_cpu_usage_seconds_total`
+- `container_memory_working_set_bytes`
+- `kube_pod_container_resource_requests`
+- `kube_pod_container_resource_limits`
+
+### AWS CloudWatch
+
+Essential for raw AWS infrastructure visibility.
+
+OpenSRE fetches:
+
+- EC2 CPU utilization
+- ECS task resource metrics
+- Network throughput
+- Disk activity
+- Autoscaling activity
+
+No additional agents are required.
+
+### Datadog
+
+Connects through the Datadog API to retrieve:
+
+- Host-level metrics
+- APM telemetry
+- Kubernetes resource utilization
+- Custom infrastructure tags
+
+Useful for hybrid cloud environments and multi-cluster deployments.
+
+### Grafana
+
+Connects to existing Grafana data sources to analyze historical workload behavior directly from your dashboards.
+
+This allows OpenSRE to reuse existing telemetry pipelines without duplicating infrastructure.
+
+## Recommended Investigation Prompts
+
+You can trigger right-sizing workflows in the OpenSRE interactive shell using natural language.
+
+### EC2 Investigation
+
+```text
+Analyze all EC2 instances in the `us-east-1` production account.
+Identify instances where max CPU utilization has not exceeded 15%
+and memory usage stayed under 30% over the last 14 days.
