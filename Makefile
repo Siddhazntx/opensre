@@ -427,19 +427,19 @@ clean:
 
 # Lint code
 lint:
-	$(PYTHON) -m ruff check app/ tests/
+	uv run python -m ruff check app/ tests/
 
 # Check formatting (read-only; CI uses this)
 format-check:
-	$(PYTHON) -m ruff format --check app/ tests/
+	uv run python -m ruff format --check app/ tests/
 
 # Format code
 format:
-	$(PYTHON) -m ruff format app/ tests/
+	uv run python -m ruff format app/ tests/
 
 # Type check
 typecheck:
-	$(PYTHON) -m mypy app/
+	uv run python -m mypy app/
 
 # Run all checks (lint + format read-only check + types + full tests; mirrors CI quality gates)
 check: lint format-check typecheck test-full

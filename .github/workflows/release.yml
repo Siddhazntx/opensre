@@ -117,13 +117,13 @@ jobs:
         run: uv sync --frozen --extra dev
 
       - name: Lint
-        run: make lint
+        run: uv run python -m ruff check app/ tests/
 
       - name: Type check
-        run: make typecheck
+        run: uv run python -m mypy app/
 
       - name: CLI smoke tests
-        run: make test-cli-smoke
+        run: uv run python -m pytest -v tests/cli_smoke_test.py
 
   build-python-dist:
     if: needs.prepare.outputs.channel == 'release' && needs.verify.result == 'success'
