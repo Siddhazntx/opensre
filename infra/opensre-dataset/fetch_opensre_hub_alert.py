@@ -55,7 +55,7 @@ def main() -> int:
         "--output",
         "-o",
         default="",
-        help="Write one alert JSON here (default: operating system temporary directory). Ignored if --export-dir is set.",
+        help="Write one alert JSON here (default: <tmpdir>/opensre-hub-alert.json). Ignored if --export-dir is set.",
     )
     parser.add_argument(
         "--export-dir",
