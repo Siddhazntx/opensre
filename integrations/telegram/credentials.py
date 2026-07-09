@@ -2,7 +2,8 @@
 
 Resolution rule:
 
-* **bot token** — integration store -> ``TELEGRAM_BOT_TOKEN`` env -> system keyring
+* bot token — explicit override -> integration store ->
+``TELEGRAM_BOT_TOKEN`` env -> system keyring
 * **chat id** — explicit override -> integration store ``default_chat_id`` ->
   ``TELEGRAM_DEFAULT_CHAT_ID`` env
 
@@ -53,11 +54,19 @@ def _telegram_store_config() -> dict[str, object]:
         return {}
 
 
-def _resolve_bot_token(store_config: dict[str, object]) -> str:
-    """Resolve the bot token: store first, then ``TELEGRAM_BOT_TOKEN`` env, then keyring."""
+def _resolve_bot_token(
+    store_config: dict[str, object],
+    bot_token_override: str | None,
+) -> str:
+    """Resolve the bot token: explicit override, then store, then env, then keyring."""
+    stripped_override = bot_token_override.strip() if bot_token_override else ""
+    if stripped_override:
+        return stripped_override
+
     store_token = str(store_config.get("bot_token") or "").strip()
     if store_token:
         return store_token
+
     # resolve_env_credential checks the environment first, then the system
     # keyring — so guided setup (which stores the token in the keyring) works.
     from config.llm_credentials import resolve_env_credential
@@ -80,8 +89,7 @@ def _resolve_chat_id(store_config: dict[str, object], chat_id_override: str | No
 
 
 def load_credentials_from_env(
-    *,
-    chat_id_override: str | None = None,
+    *, chat_id_override: str | None = None, bot_token_override: str | None = None
 ) -> TelegramCredentials:
     """Resolve Telegram credentials from the integration store, env, or keyring.
 
@@ -90,7 +98,10 @@ def load_credentials_from_env(
     """
     store_config = _telegram_store_config()
 
-    bot_token = _resolve_bot_token(store_config)
+    bot_token = _resolve_bot_token(
+        store_config,
+        bot_token_override,
+    )
     if not bot_token:
         raise OpenSREError(
             "TELEGRAM_BOT_TOKEN is not set.",

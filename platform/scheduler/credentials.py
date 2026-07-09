@@ -10,6 +10,9 @@ import logging
 import os
 from typing import Any
 
+from integrations.telegram.credentials import load_credentials_from_env
+from platform.common.errors import OpenSREError
+
 logger = logging.getLogger(__name__)
 
 
@@ -18,12 +21,17 @@ def resolve_telegram_credentials(task_params: dict[str, str]) -> dict[str, str]:
 
     Priority: task.params > integration store > environment variable.
     """
-    return _resolve_credentials(
-        task_params,
-        service="telegram",
-        credential_key="bot_token",
-        env_vars=("TELEGRAM_BOT_TOKEN",),
-    )
+    try:
+        creds = load_credentials_from_env(
+            bot_token_override=task_params.get("bot_token"),
+        )
+        return {"bot_token": creds.bot_token}
+    except OpenSREError as exc:
+        logger.debug(
+            "Failed to resolve Telegram credentials in scheduler: %s",
+            exc,
+        )
+        return {}
 
 
 def resolve_slack_credentials(task_params: dict[str, str]) -> dict[str, str]:
