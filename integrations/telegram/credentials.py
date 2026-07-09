@@ -2,8 +2,8 @@
 
 Resolution rule:
 
-* bot token — explicit override -> integration store ->
-``TELEGRAM_BOT_TOKEN`` env -> system keyring
+* **bot token** — explicit override -> integration store ->
+  ``TELEGRAM_BOT_TOKEN`` env -> system keyring
 * **chat id** — explicit override -> integration store ``default_chat_id`` ->
   ``TELEGRAM_DEFAULT_CHAT_ID`` env
 
@@ -55,6 +55,7 @@ def _telegram_store_config() -> dict[str, object]:
 
 
 def _resolve_bot_token(
+    *,
     store_config: dict[str, object],
     bot_token_override: str | None,
 ) -> str:
@@ -73,6 +74,18 @@ def _resolve_bot_token(
 
     return resolve_env_credential("TELEGRAM_BOT_TOKEN").strip()
 
+def resolve_bot_token(
+    *,
+    bot_token_override: str | None = None,
+) -> str:
+    """Resolve the Telegram bot token using override, store, environment and keyring."""
+    store_config = _telegram_store_config()
+
+    return _resolve_bot_token(
+        store_config=store_config,
+        bot_token_override=bot_token_override,
+    )
+
 
 def _resolve_chat_id(store_config: dict[str, object], chat_id_override: str | None) -> str:
     """Resolve the chat id: explicit override, then store, then env."""
@@ -89,7 +102,7 @@ def _resolve_chat_id(store_config: dict[str, object], chat_id_override: str | No
 
 
 def load_credentials_from_env(
-    *, chat_id_override: str | None = None, bot_token_override: str | None = None
+    *, chat_id_override: str | None = None,
 ) -> TelegramCredentials:
     """Resolve Telegram credentials from the integration store, env, or keyring.
 
@@ -99,8 +112,8 @@ def load_credentials_from_env(
     store_config = _telegram_store_config()
 
     bot_token = _resolve_bot_token(
-        store_config,
-        bot_token_override,
+        store_config=store_config,
+        bot_token_override=None,
     )
     if not bot_token:
         raise OpenSREError(
